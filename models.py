@@ -21,6 +21,20 @@ COLUMNS = [
     "source_type",
 ]
 
+# Maps the bot's internal field keys -> your Airtable column display names.
+# Airtable matches columns by exact name (case- and space-sensitive), so this is
+# where you reconcile the two. Edit the right-hand side to match your columns.
+FIELD_MAP = {
+    "title": "title",
+    "deadline": "deadline",
+    "url": "url",
+    "description": "description",
+    "category": "category",
+    "status": "status",
+    "added_at": "added at",
+    "source_type": "source type",
+}
+
 Category = Literal["job", "grant", "cfp", "fellowship", "other"]
 Status = Literal["interested", "applied", "passed"]
 

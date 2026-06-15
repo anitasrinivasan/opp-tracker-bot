@@ -14,12 +14,9 @@ from datetime import datetime, timezone
 
 from pyairtable import Api
 
-from models import Opportunity
+from models import FIELD_MAP, Opportunity
 
 logger = logging.getLogger(__name__)
-
-# Editable fields, in display order (used by the +/same overwrite).
-_EDITABLE = ("title", "deadline", "url", "description", "category", "status")
 
 
 def open_table(cfg):
@@ -40,23 +37,23 @@ def check_access(table) -> None:
 
 
 def to_fields(opp: Opportunity, source_type: str, override_url: str | None = None) -> dict:
-    """Build an Airtable fields dict from an Opportunity. Pure (stamps added_at now).
+    """Build an Airtable fields dict (keyed by column display name). Pure.
 
-    Empty deadline/url are omitted so the cells stay blank.
+    Stamps added_at now. Empty deadline/url are omitted so the cells stay blank.
     """
     fields: dict[str, str] = {
-        "title": opp.title,
-        "description": opp.description,
-        "category": opp.category,
-        "status": opp.status,
-        "added_at": datetime.now(timezone.utc).isoformat(),
-        "source_type": source_type,
+        FIELD_MAP["title"]: opp.title,
+        FIELD_MAP["description"]: opp.description,
+        FIELD_MAP["category"]: opp.category,
+        FIELD_MAP["status"]: opp.status,
+        FIELD_MAP["added_at"]: datetime.now(timezone.utc).isoformat(),
+        FIELD_MAP["source_type"]: source_type,
     }
     url = override_url or opp.url
     if opp.deadline:
-        fields["deadline"] = opp.deadline
+        fields[FIELD_MAP["deadline"]] = opp.deadline
     if url:
-        fields["url"] = url
+        fields[FIELD_MAP["url"]] = url
     return fields
 
 
@@ -82,9 +79,12 @@ async def append_url_only(table, url: str, title: str) -> str | None:
 
 
 async def update_field(table, record_id: str, field: str, value: str) -> None:
-    """Update a single editable field on a record. Empty value clears the cell."""
+    """Update a single editable field on a record. Empty value clears the cell.
+
+    `field` is the internal key (e.g. "deadline"); it's mapped to the column name.
+    """
     await asyncio.to_thread(
-        table.update, record_id, {field: (value or None)}, typecast=True
+        table.update, record_id, {FIELD_MAP[field]: (value or None)}, typecast=True
     )
 
 
@@ -93,11 +93,11 @@ async def overwrite_record(
 ) -> None:
     """Overwrite the editable fields of a record (leaves added_at/source_type)."""
     fields = {
-        "title": opp.title,
-        "deadline": opp.deadline or None,
-        "url": override_url or opp.url or None,
-        "description": opp.description,
-        "category": opp.category,
-        "status": opp.status,
+        FIELD_MAP["title"]: opp.title,
+        FIELD_MAP["deadline"]: opp.deadline or None,
+        FIELD_MAP["url"]: override_url or opp.url or None,
+        FIELD_MAP["description"]: opp.description,
+        FIELD_MAP["category"]: opp.category,
+        FIELD_MAP["status"]: opp.status,
     }
     await asyncio.to_thread(table.update, record_id, fields, typecast=True)
