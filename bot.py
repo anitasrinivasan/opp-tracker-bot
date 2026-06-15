@@ -129,7 +129,7 @@ def added_reply(opps: list[Opportunity]) -> str:
 
 @dataclass
 class ChatState:
-    last_row: int | None = None
+    last_record_id: str | None = None
     last_source_images: list = field(default_factory=list)
     last_source_type: str | None = None
     last_override_url: str | None = None
@@ -161,7 +161,7 @@ async def _extract_and_save(
 ) -> None:
     cfg: Config = context.bot_data["cfg"]
     client: AsyncAnthropic = context.bot_data["anthropic"]
-    ws = context.bot_data["ws"]
+    table = context.bot_data["table"]
     today_iso = today_iso or date.today().isoformat()
 
     opps = await extract(client, cfg.model, today_iso, text=text, image_blocks=image_blocks)
@@ -172,9 +172,9 @@ async def _extract_and_save(
         )
         return
 
-    last = await store.append_opportunities(ws, opps, source_type, override_url)
+    last = await store.append_opportunities(table, opps, source_type, override_url)
     state = _state(context, chat_id)
-    state.last_row = last
+    state.last_record_id = last
     state.last_source_type = source_type
     state.last_source_images = source_images or []
     state.last_override_url = override_url
@@ -183,10 +183,10 @@ async def _extract_and_save(
 
 
 async def _save_url_only(context, chat_id: int, url: str, reply: str) -> None:
-    ws = context.bot_data["ws"]
-    row = await store.append_url_only(ws, url, sources.host_label(url))
+    table = context.bot_data["table"]
+    record_id = await store.append_url_only(table, url, sources.host_label(url))
     state = _state(context, chat_id)
-    state.last_row = row
+    state.last_record_id = record_id
     state.last_source_type = "url"
     state.last_source_images = []
     state.last_override_url = url
@@ -209,7 +209,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         "📌 Opportunity Tracker\n"
         "Send me a job/grant/CFP/fellowship as text, a link, or a screenshot — "
-        "I'll parse it and add a row to your sheet.\n"
+        "I'll parse it and add a row to your Airtable.\n"
         "• Multiple screenshots of one listing: send them as an album, "
         "or caption a follow-up photo `+` to merge it.\n"
         '• Reply "edit" to correct the last entry.'
@@ -229,7 +229,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # --- edit flow ---
     if text.lower() == "edit":
-        if state.last_row is None:
+        if state.last_record_id is None:
             await msg.reply_text("Nothing to edit yet — add an opportunity first.")
         else:
             state.awaiting_edit_field = True
@@ -237,12 +237,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     edit_cmd = parse_edit_command(text)
-    if edit_cmd and (state.awaiting_edit_field or state.last_row is not None):
-        if state.last_row is None:
+    if edit_cmd and (state.awaiting_edit_field or state.last_record_id is not None):
+        if state.last_record_id is None:
             await msg.reply_text("Nothing to edit yet — add an opportunity first.")
             return
         field_name, value = edit_cmd
-        await store.update_field(context.bot_data["ws"], state.last_row, field_name, value)
+        await store.update_field(context.bot_data["table"], state.last_record_id, field_name, value)
         state.awaiting_edit_field = False
         await msg.reply_text(f"✏️ Updated {field_name} → {value or '(cleared)'}")
         return
@@ -354,7 +354,7 @@ async def flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _handle_continuation(context, chat_id: int, image_block: dict) -> None:
     state = _state(context, chat_id)
-    if state.last_row is None:
+    if state.last_record_id is None:
         # nothing to merge into — treat as a fresh single photo
         await _extract_and_save(
             context,
@@ -367,7 +367,7 @@ async def _handle_continuation(context, chat_id: int, image_block: dict) -> None
 
     cfg: Config = context.bot_data["cfg"]
     client: AsyncAnthropic = context.bot_data["anthropic"]
-    ws = context.bot_data["ws"]
+    table = context.bot_data["table"]
     images = list(state.last_source_images) + [image_block]
     opps = await extract(client, cfg.model, date.today().isoformat(), image_blocks=images)
     if not opps:
@@ -376,7 +376,9 @@ async def _handle_continuation(context, chat_id: int, image_block: dict) -> None
         )
         return
     primary = opps[0]
-    await store.overwrite_row(ws, state.last_row, primary, override_url=state.last_override_url)
+    await store.overwrite_record(
+        table, state.last_record_id, primary, override_url=state.last_override_url
+    )
     state.last_source_images = images
     await context.bot.send_message(
         chat_id,
@@ -399,10 +401,10 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 # --- Wiring ----------------------------------------------------------------
 
 
-def build_app(cfg: Config, ws) -> Application:
+def build_app(cfg: Config, table) -> Application:
     app = ApplicationBuilder().token(cfg.telegram_token).build()
     app.bot_data["cfg"] = cfg
-    app.bot_data["ws"] = ws
+    app.bot_data["table"] = table
     app.bot_data["anthropic"] = AsyncAnthropic(api_key=cfg.anthropic_api_key)
     app.bot_data["chat_state"] = {}
     app.bot_data["album_buffers"] = {}
@@ -421,9 +423,9 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     cfg = get_config()
-    ws = store.open_worksheet(cfg)
-    store.ensure_header_row(ws)
-    app = build_app(cfg, ws)
+    table = store.open_table(cfg)
+    store.check_access(table)
+    app = build_app(cfg, table)
     logger.info("Opportunity Tracker bot starting (model=%s)…", cfg.model)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

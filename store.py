@@ -1,110 +1,103 @@
-"""Google Sheets persistence via gspread + a service account.
+"""Airtable persistence via pyairtable + a Personal Access Token.
 
-The Sheet is one the user owns and has shared (Editor) with the service
-account's email. gspread is synchronous, so every network call is wrapped in
-asyncio.to_thread to keep the bot's event loop responsive.
+Rows are records in an Airtable table the user owns. pyairtable is synchronous,
+so every network call is wrapped in asyncio.to_thread to keep the bot's event
+loop responsive. Records are addressed by their Airtable record id (recXXX),
+which is returned on create — cleaner than tracking spreadsheet row numbers.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timezone
 
-import gspread
+from pyairtable import Api
 
-from models import COL_INDEX, COLUMNS, Opportunity
+from models import Opportunity
 
 logger = logging.getLogger(__name__)
 
-_RANGE_ROW = re.compile(r"![A-Z]+(\d+)(?::[A-Z]+(\d+))?")
+# Editable fields, in display order (used by the +/same overwrite).
+_EDITABLE = ("title", "deadline", "url", "description", "category", "status")
 
 
-def open_worksheet(cfg):
-    """Authenticate as the service account and open the target worksheet (sync)."""
-    gc = gspread.service_account(filename=cfg.service_account_file)
-    return gc.open_by_key(cfg.sheet_id).worksheet(cfg.worksheet_name)
+def open_table(cfg):
+    """Open the configured Airtable table (sync)."""
+    return Api(cfg.airtable_token).table(cfg.airtable_base_id, cfg.airtable_table_name)
 
 
-def ensure_header_row(ws) -> None:
-    """Write the header row if the sheet is empty or its header doesn't match (sync)."""
+def check_access(table) -> None:
+    """Fail fast at startup with a clear message if the table isn't reachable (sync)."""
     try:
-        first = ws.row_values(1)
-    except gspread.exceptions.APIError:
-        first = []
-    if first[: len(COLUMNS)] != COLUMNS:
-        ws.update(range_name="A1", values=[COLUMNS])
-        logger.info("Wrote header row to worksheet %r", ws.title)
+        table.all(max_records=1)
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            f"Could not read the Airtable table '{table.name}'. Check AIRTABLE_TOKEN "
+            f"(needs data.records:read + data.records:write on this base), AIRTABLE_BASE_ID, "
+            f"and that the table exists with the documented fields. Original error: {e}"
+        ) from e
 
 
-def to_row(opp: Opportunity, source_type: str, override_url: str | None = None) -> list[str]:
-    """Build a sheet row in COLUMNS order. Pure. added_at stamped now."""
-    return [
-        opp.title,
-        opp.deadline or "",
-        override_url or opp.url or "",
-        opp.description,
-        opp.category,
-        opp.status,
-        datetime.now(timezone.utc).isoformat(),
-        source_type,
-    ]
+def to_fields(opp: Opportunity, source_type: str, override_url: str | None = None) -> dict:
+    """Build an Airtable fields dict from an Opportunity. Pure (stamps added_at now).
 
-
-def last_row_from_response(resp: dict) -> int | None:
-    """Parse the last written row index out of an append response's updatedRange.
-
-    e.g. {"updates": {"updatedRange": "Opportunities!A7:H9"}} -> 9. Pure.
+    Empty deadline/url are omitted so the cells stay blank.
     """
-    try:
-        rng = resp["updates"]["updatedRange"]
-    except (KeyError, TypeError):
-        return None
-    m = _RANGE_ROW.search(rng)
-    if not m:
-        return None
-    start, end = m.group(1), m.group(2)
-    return int(end or start)
+    fields: dict[str, str] = {
+        "title": opp.title,
+        "description": opp.description,
+        "category": opp.category,
+        "status": opp.status,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+        "source_type": source_type,
+    }
+    url = override_url or opp.url
+    if opp.deadline:
+        fields["deadline"] = opp.deadline
+    if url:
+        fields["url"] = url
+    return fields
 
 
-def _append_sync(ws, rows: list[list[str]]) -> int | None:
-    resp = ws.append_rows(rows, value_input_option="USER_ENTERED")
-    return last_row_from_response(resp)
+def _create_sync(table, fields_list: list[dict]) -> str | None:
+    records = table.batch_create(fields_list, typecast=True)
+    return records[-1]["id"] if records else None
 
 
 async def append_opportunities(
-    ws, opps: list[Opportunity], source_type: str, override_url: str | None = None
-) -> int | None:
-    """Append one or more opportunities; return the last written row index."""
-    rows = [to_row(o, source_type, override_url) for o in opps]
-    if not rows:
+    table, opps: list[Opportunity], source_type: str, override_url: str | None = None
+) -> str | None:
+    """Create one record per opportunity; return the last record id."""
+    fields_list = [to_fields(o, source_type, override_url) for o in opps]
+    if not fields_list:
         return None
-    return await asyncio.to_thread(_append_sync, ws, rows)
+    return await asyncio.to_thread(_create_sync, table, fields_list)
 
 
-async def append_url_only(ws, url: str, title: str) -> int | None:
-    """Append a placeholder row capturing just the URL (soft-fail fallback)."""
+async def append_url_only(table, url: str, title: str) -> str | None:
+    """Create a placeholder record capturing just the URL (soft-fail fallback)."""
     opp = Opportunity(title=title, url=url)
-    return await append_opportunities(ws, [opp], "url", override_url=url)
+    return await append_opportunities(table, [opp], "url", override_url=url)
 
 
-async def update_field(ws, row: int, field: str, value: str) -> None:
-    """Update a single editable cell (1-based row)."""
-    col = COL_INDEX[field]
-    await asyncio.to_thread(ws.update_cell, row, col, value)
-
-
-async def overwrite_row(ws, row: int, opp: Opportunity, override_url: str | None = None) -> None:
-    """Overwrite the editable columns A:F of `row` (leaves added_at/source_type)."""
-    values = [[
-        opp.title,
-        opp.deadline or "",
-        override_url or opp.url or "",
-        opp.description,
-        opp.category,
-        opp.status,
-    ]]
+async def update_field(table, record_id: str, field: str, value: str) -> None:
+    """Update a single editable field on a record. Empty value clears the cell."""
     await asyncio.to_thread(
-        ws.update, range_name=f"A{row}:F{row}", values=values, value_input_option="USER_ENTERED"
+        table.update, record_id, {field: (value or None)}, typecast=True
     )
+
+
+async def overwrite_record(
+    table, record_id: str, opp: Opportunity, override_url: str | None = None
+) -> None:
+    """Overwrite the editable fields of a record (leaves added_at/source_type)."""
+    fields = {
+        "title": opp.title,
+        "deadline": opp.deadline or None,
+        "url": override_url or opp.url or None,
+        "description": opp.description,
+        "category": opp.category,
+        "status": opp.status,
+    }
+    await asyncio.to_thread(table.update, record_id, fields, typecast=True)

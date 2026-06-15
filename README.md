@@ -1,7 +1,7 @@
 # Opportunity Tracker Bot
 
 A personal Telegram bot that captures opportunities (jobs, grants, CFPs, fellowships) you come
-across, parses them with Claude, and appends structured rows to a Google Sheet for deadline
+across, parses them with Claude, and appends structured records to an Airtable table for deadline
 tracking. Input arrives as **text**, a **URL**, or a **screenshot** — all three normalize into one
 extraction step that outputs the same schema.
 
@@ -20,10 +20,10 @@ Telegram message
         ↓
    Pydantic validation (dates normalized; bad items skipped, not fatal)
         ↓
-   Append row(s) → Google Sheet  → reply "✅ Added: <title> — deadline <date>"
+   Append record(s) → Airtable  → reply "✅ Added: <title> — deadline <date>"
 ```
 
-### Sheet columns
+### Fields
 
 `title` · `deadline` (YYYY-MM-DD, blank if none) · `url` · `description` · `category`
 (job/grant/cfp/fellowship/other) · `status` (interested/applied/passed) · `added_at` · `source_type`
@@ -49,29 +49,33 @@ cp .env.example .env                      # then fill in the values below
    (comma-separated if more than one). **This is the security lock** — the bot ignores everyone
    whose ID isn't listed.
 
-### 3. Connect the Google Sheet
+### 3. Connect Airtable (free — no credit card, no cloud project)
 
-The bot writes to a sheet **you own**. Three things must line up — none are hardcoded:
+1. **Create the base and table.**
+   - Sign in at [airtable.com](https://airtable.com) (free).
+   - Create a **base**, and inside it a **table** named `Opportunities` (or set `AIRTABLE_TABLE_NAME`
+     to whatever you name it).
+   - Give the table these **fields, named exactly** (case-sensitive). Easiest: make them all
+     **Single line text**. (Optional: make `deadline` a **Date** field for Airtable's date UI —
+     the bot sends `YYYY-MM-DD` with typecast, so either type works.)
 
-1. **Create a service account (the bot's robot identity).**
-   - Go to [console.cloud.google.com](https://console.cloud.google.com) → create/select a project.
-   - **APIs & Services → Library** → enable **Google Sheets API** and **Google Drive API**.
-   - **APIs & Services → Credentials → Create credentials → Service account** → create it.
-   - Open the service account → **Keys → Add key → JSON** → download it, save as
-     `service_account.json` in this folder. (It's gitignored — never commit it.)
-   - Note the service account's email, e.g. `opp-tracker@<project>.iam.gserviceaccount.com`.
+     `title` · `deadline` · `url` · `description` · `category` · `status` · `added_at` · `source_type`
 
-2. **Create the Sheet (you own it).**
-   - Make a blank Google Sheet in your normal Drive.
-   - Copy its ID from the URL: `https://docs.google.com/spreadsheets/d/`**`<THIS_IS_THE_ID>`**`/edit`
-     → put it in `GOOGLE_SHEET_ID`.
-   - `GOOGLE_WORKSHEET_NAME` defaults to `Opportunities` — rename the tab to match, or change the
-     env var. The bot writes the header row automatically on first run.
+     Delete Airtable's default `Notes`/`Assignee`/`Status` starter fields if they get in the way
+     (or just leave them — the bot only writes the fields above).
 
-3. **Share the Sheet with the robot (this is the connection).**
-   - In the Sheet, click **Share**, paste the service account's email, give it **Editor**, send.
-   - Skipping this is the #1 mistake: the bot authenticates fine but gets a `403 PermissionError`
-     on its first write.
+2. **Find the base ID.**
+   - Open the base, click **Help → API documentation** (or visit
+     [airtable.com/api](https://airtable.com/api) and pick the base). The page shows the base ID,
+     which looks like `appXXXXXXXXXXXXXX` → put it in `AIRTABLE_BASE_ID`.
+
+3. **Create a Personal Access Token (this is the connection).**
+   - Go to [airtable.com/create/tokens](https://airtable.com/create/tokens) → **Create token**.
+   - **Scopes:** add `data.records:read` and `data.records:write`.
+   - **Access:** add the base you created above.
+   - Create it, copy the token (starts with `pat…`) → put it in `AIRTABLE_TOKEN`.
+   - The bot checks access on startup and prints a clear error if the token, base ID, or fields are
+     wrong — so you'll know immediately if something's off.
 
 ### 4. (Optional) X / Twitter links
 
@@ -114,7 +118,7 @@ Then DM your bot.
 | `bot.py` | Telegram handlers, routing, owner guard, album buffering, edit flow |
 | `extract.py` | Claude extraction call, prompt, JSON parse + per-item validation |
 | `sources.py` | URL domain routing, generic fetch, X CLI, screenshot → image block |
-| `store.py` | Google Sheets append/update (via `asyncio.to_thread`) |
+| `store.py` | Airtable append/update (via `asyncio.to_thread`) |
 | `models.py` | Pydantic `Opportunity` + fixed column order |
 | `config.py` | `.env` loading |
 
@@ -127,7 +131,8 @@ pytest -q
 
 Covers the pure logic with no secrets or network: URL routing, soft-fail detection, X-CLI output
 parsing, extraction prompt building + JSON parse (skip-bad-keep-good), date/enum validation, text
-routing, edit-command parsing, and the Sheets row/range helpers (HTTP mocked with `responses`).
+routing, edit-command parsing, and the Airtable field builder. (HTTP is mocked with `responses` for
+the URL-fetch tests.)
 
 ## Notes & limits (v1)
 
@@ -137,4 +142,4 @@ routing, edit-command parsing, and the Sheets row/range helpers (HTTP mocked wit
 - **Stragglers in an album** that arrive >~2s after the rest become a separate opportunity; use the
   `+` / `same` caption to merge.
 - **Out of scope:** JS-rendered scraping (Playwright), dedup, reminder DMs, multi-user support.
-  `.env` and `service_account.json` are gitignored — never commit secrets.
+  `.env` is gitignored — never commit secrets.

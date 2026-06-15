@@ -1,4 +1,4 @@
-"""Pydantic models and the fixed Sheet column order."""
+"""Pydantic models and the fixed field order."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-# Sheet columns, in order. The first six come from the LLM (via Opportunity);
-# added_at and source_type are set by application code at write time.
+# The fields stored per opportunity, in display order. The first six come from
+# the LLM (via Opportunity); added_at and source_type are set by application
+# code at write time. These are the field names to create in the Airtable table.
 COLUMNS = [
     "title",
     "deadline",
@@ -19,9 +20,6 @@ COLUMNS = [
     "added_at",
     "source_type",
 ]
-
-# 1-based column index for each field (gspread is 1-based).
-COL_INDEX = {name: i + 1 for i, name in enumerate(COLUMNS)}
 
 Category = Literal["job", "grant", "cfp", "fellowship", "other"]
 Status = Literal["interested", "applied", "passed"]

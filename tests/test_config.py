@@ -7,12 +7,13 @@ from config import _parse_ids, load_config
 def test_load_config_ok():
     cfg = load_config()
     assert cfg.model == "claude-sonnet-4-6"
-    assert cfg.sheet_id == "test-sheet-id"
+    assert cfg.airtable_base_id == "appTEST123"
+    assert cfg.airtable_table_name == "Opportunities"
     assert cfg.allowed_user_ids == {111, 222}
 
 
 def test_missing_required_var_exits(monkeypatch):
-    monkeypatch.delenv("GOOGLE_SHEET_ID", raising=False)
+    monkeypatch.delenv("AIRTABLE_BASE_ID", raising=False)
     with pytest.raises(SystemExit):
         load_config()
 

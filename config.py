@@ -18,7 +18,7 @@ DEFAULT_USER_AGENT = (
 )
 
 # Required for the bot to start at all.
-_REQUIRED = ["TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "GOOGLE_SHEET_ID"]
+_REQUIRED = ["TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "AIRTABLE_TOKEN", "AIRTABLE_BASE_ID"]
 
 
 @dataclass
@@ -26,9 +26,9 @@ class Config:
     telegram_token: str
     anthropic_api_key: str
     model: str
-    sheet_id: str
-    worksheet_name: str
-    service_account_file: str
+    airtable_token: str
+    airtable_base_id: str
+    airtable_table_name: str
     allowed_user_ids: set[int] = field(default_factory=set)
     twitter_auth_token: str = ""
     twitter_ct0: str = ""
@@ -76,9 +76,9 @@ def load_config() -> Config:
         telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
         anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
         model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-        sheet_id=os.environ["GOOGLE_SHEET_ID"],
-        worksheet_name=os.environ.get("GOOGLE_WORKSHEET_NAME", "Opportunities"),
-        service_account_file=os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json"),
+        airtable_token=os.environ["AIRTABLE_TOKEN"],
+        airtable_base_id=os.environ["AIRTABLE_BASE_ID"],
+        airtable_table_name=os.environ.get("AIRTABLE_TABLE_NAME", "Opportunities"),
         allowed_user_ids=allowed,
         twitter_auth_token=os.environ.get("TWITTER_AUTH_TOKEN", ""),
         twitter_ct0=os.environ.get("TWITTER_CT0", ""),

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from models import COL_INDEX, COLUMNS, Opportunity
+from models import COLUMNS, Opportunity
 
 
 def test_defaults():
@@ -42,7 +42,6 @@ def test_extra_fields_ignored():
     assert o.title == "t"
 
 
-def test_columns_and_index():
+def test_columns():
     assert COLUMNS[0] == "title" and COLUMNS[-1] == "source_type"
-    assert COL_INDEX["title"] == 1
-    assert COL_INDEX["status"] == 6
+    assert len(COLUMNS) == 8
