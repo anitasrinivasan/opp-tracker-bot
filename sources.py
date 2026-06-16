@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -188,9 +189,9 @@ async def download_photo_as_image_block(message, bot) -> dict:
     """Download the largest PhotoSize in-memory and return a base64 image block."""
     photo = message.photo[-1]  # last size == largest
     tg_file = await bot.get_file(photo.file_id)
-    buf = bytearray()
+    buf = io.BytesIO()  # download_to_memory writes via .write(), needs a stream
     await tg_file.download_to_memory(buf)
-    b64 = base64.standard_b64encode(bytes(buf)).decode("ascii")
+    b64 = base64.standard_b64encode(buf.getvalue()).decode("ascii")
     return {
         "type": "image",
         "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},

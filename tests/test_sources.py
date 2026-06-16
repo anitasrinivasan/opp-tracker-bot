@@ -82,3 +82,45 @@ def test_fetch_generic_bs4_fallback_and_truncation():
 def test_fetch_generic_http_error_returns_none():
     responses.add(responses.GET, "https://example.org/missing", status=404)
     assert _fetch_generic_sync("https://example.org/missing", "UA") is None
+
+
+# --- photo download (regression: must pass a writable stream, not a bytearray) ---
+
+
+class _FakePhoto:
+    def __init__(self, file_id):
+        self.file_id = file_id
+
+
+class _FakeMsg:
+    def __init__(self, photos):
+        self.photo = photos
+
+
+class _FakeFile:
+    def __init__(self, data):
+        self._data = data
+
+    async def download_to_memory(self, out):
+        out.write(self._data)  # mirrors python-telegram-bot: writes to a stream
+
+
+class _FakeBot:
+    def __init__(self, data):
+        self._data = data
+
+    async def get_file(self, file_id):
+        return _FakeFile(self._data)
+
+
+def test_download_photo_as_image_block():
+    import asyncio
+    import base64
+
+    raw = b"\xff\xd8\xff_fakejpegbytes"
+    msg = _FakeMsg([_FakePhoto("thumb"), _FakePhoto("largest")])
+    block = asyncio.run(sources.download_photo_as_image_block(msg, _FakeBot(raw)))
+    assert block["type"] == "image"
+    assert block["source"]["type"] == "base64"
+    assert block["source"]["media_type"] == "image/jpeg"
+    assert base64.standard_b64decode(block["source"]["data"]) == raw
