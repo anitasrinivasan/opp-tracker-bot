@@ -87,6 +87,39 @@ def is_soft_fail(text: str | None) -> bool:
 # --- Generic fetch ---------------------------------------------------------
 
 
+def _structured_text(soup) -> str:
+    """Harvest embedded metadata: JSON-LD, OpenGraph/meta, and <title>.
+
+    JS-rendered listings (Ashby, Greenhouse, Lever, Workday, …) ship a near-empty
+    HTML shell but embed a JSON-LD JobPosting + og: tags for SEO. Reading those
+    lets us capture the listing without a headless browser.
+    """
+    parts: list[str] = []
+    if soup.title and soup.title.string:
+        parts.append(f"Page title: {soup.title.string.strip()}")
+    for m in soup.find_all("meta"):
+        key = (m.get("property") or m.get("name") or "").lower()
+        if key in ("og:title", "og:description", "description"):
+            content = (m.get("content") or "").strip()
+            if content:
+                parts.append(f"{key}: {content}")
+    for tag in soup.find_all("script", type="application/ld+json"):
+        raw = tag.string or tag.get_text() or ""
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for obj in data if isinstance(data, list) else [data]:
+            if not isinstance(obj, dict):
+                continue
+            # description often contains HTML — strip it for clean tokens
+            if isinstance(obj.get("description"), str):
+                obj = {**obj, "description": BeautifulSoup(
+                    obj["description"], "html.parser").get_text(" ", strip=True)}
+            parts.append("JSON-LD: " + json.dumps(obj, ensure_ascii=False)[:8000])
+    return "\n".join(parts).strip()
+
+
 def _fetch_generic_sync(url: str, user_agent: str) -> str | None:
     try:
         r = requests.get(url, headers={"User-Agent": user_agent}, timeout=FETCH_TIMEOUT)
@@ -96,11 +129,14 @@ def _fetch_generic_sync(url: str, user_agent: str) -> str | None:
         return None
 
     html = r.text
-    text = trafilatura.extract(html) or ""
+    text = (trafilatura.extract(html) or "").strip()
     if len(text) < THIN_CONTENT_CHARS:
+        # Thin/JS-rendered page: combine visible text with embedded metadata
+        # (JSON-LD / OpenGraph), which often carries the full listing.
         soup = BeautifulSoup(html, "html.parser")
-        text = soup.get_text(separator=" ", strip=True)
-    text = (text or "").strip()
+        body = soup.get_text(separator=" ", strip=True)
+        meta = _structured_text(soup)
+        text = "\n\n".join(p for p in (meta, body) if p).strip()
     return text[:MAX_CONTENT_CHARS] if text else None
 
 

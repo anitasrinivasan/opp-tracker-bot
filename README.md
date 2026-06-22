@@ -141,5 +141,9 @@ the URL-fetch tests.)
 - **No deadline reminders** yet.
 - **Stragglers in an album** that arrive >~2s after the rest become a separate opportunity; use the
   `+` / `same` caption to merge.
-- **Out of scope:** JS-rendered scraping (Playwright), dedup, reminder DMs, multi-user support.
+- **JS-rendered pages:** no headless browser (Playwright is out of scope), but the URL fetch reads
+  embedded **JSON-LD / OpenGraph** metadata, so many JS job boards (Ashby, Greenhouse, Lever,
+  Workday, …) still parse from the link. Pages with no embedded metadata fall back to the
+  screenshot path.
+- **Out of scope:** full headless-browser scraping, dedup, reminder DMs, multi-user support.
   `.env` is gitignored — never commit secrets.

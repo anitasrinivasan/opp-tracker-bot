@@ -84,6 +84,28 @@ def test_fetch_generic_http_error_returns_none():
     assert _fetch_generic_sync("https://example.org/missing", "UA") is None
 
 
+@responses.activate
+def test_fetch_generic_recovers_jsonld_from_thin_js_page():
+    # Mimics an Ashby-style SPA: empty body, but JSON-LD JobPosting in the head.
+    html = (
+        '<html><head><title>Model Policy @ OpenAI</title>'
+        '<meta property="og:description" content="OpenAI Model Policy Manager">'
+        '<script type="application/ld+json">'
+        '{"@type":"JobPosting","title":"Model Policy","datePosted":"2026-05-13",'
+        '"validThrough":"2026-07-01","description":"<p>Lead model policy work.</p>",'
+        '"hiringOrganization":{"@type":"Organization","name":"OpenAI"}}'
+        '</script></head><body><div id="root"></div></body></html>'
+    )
+    responses.add(responses.GET, "https://jobs.ashbyhq.com/openai/x", body=html, status=200)
+    text = _fetch_generic_sync("https://jobs.ashbyhq.com/openai/x", "UA")
+    assert text is not None
+    assert "Model Policy" in text
+    assert "OpenAI" in text
+    assert "2026-07-01" in text          # validThrough -> usable as deadline
+    assert "<p>" not in text             # description HTML stripped
+    assert not is_soft_fail(text)        # now rich enough to extract from
+
+
 # --- photo download (regression: must pass a writable stream, not a bytearray) ---
 
 
