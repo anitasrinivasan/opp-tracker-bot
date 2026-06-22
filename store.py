@@ -20,8 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 def open_table(cfg):
-    """Open the configured Airtable table (sync)."""
-    return Api(cfg.airtable_token).table(cfg.airtable_base_id, cfg.airtable_table_name)
+    """Open the configured Airtable table (sync).
+
+    A (connect, read) timeout ensures a stalled write fails fast instead of
+    hanging a handler forever on a flaky network.
+    """
+    api = Api(cfg.airtable_token, timeout=(10, 30))
+    return api.table(cfg.airtable_base_id, cfg.airtable_table_name)
 
 
 def check_access(table) -> None:
